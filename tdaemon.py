@@ -14,12 +14,13 @@ file for more details.
 import sys
 import os
 import optparse
-from time import sleep
-import hashlib
-import commands
 import datetime
+import subprocess
 
-IGNORE_EXTENSIONS = ('pyc', 'pyo')
+from time import sleep, time
+from collections import defaultdict
+
+IGNORE_EXTENSIONS = ('pyc', 'pyo', 'swp')
 IGNORE_DIRS = ('.bzr', '.git', '.hg', '.darcs', '.svn')
 IMPLEMENTED_TEST_PROGRAMS = ('nose', 'nosetests', 'django', 'py', 'symfony',
     'jelix',
@@ -60,11 +61,17 @@ class Watcher(object):
     Watcher class. This is the daemon that is watching every file in the
     directory and subdirectories, and that runs the test process.
     """
-    file_list = {}
     debug = False
 
-    def __init__(self, file_path, test_program, debug=False, custom_args='', 
-        ignore_dirs=None):
+    def __init__(
+            self,
+            file_path,
+            test_program,
+            debug=False,
+            custom_args='',
+            ignore_dirs=None,
+        ):
+        self.debug = debug
         # Safe filter
         custom_args = escapearg(custom_args)
 
@@ -72,6 +79,7 @@ class Watcher(object):
         self.ignore_dirs = list(IGNORE_DIRS)
         if ignore_dirs:
             self.ignore_dirs.extend([d for d in ignore_dirs.split(',')])
+
         self.file_list = self.walk(file_path)
         self.test_program = test_program
         self.custom_args = custom_args
@@ -80,7 +88,6 @@ class Watcher(object):
         self.check_configuration(file_path, test_program, custom_args)
 
         self.check_dependencies()
-        self.debug = debug
         self.cmd = self.get_cmd()
 
 
@@ -158,46 +165,57 @@ class Watcher(object):
                 return False
         return True
 
-    def walk(self, top, file_list={}):
-        """Walks the walk. nah, seriously: reads the file and stores a hashkey
-        corresponding to its content."""
-        for root, dirs, files in os.walk(top, topdown=False):
-            if os.path.basename(root) in self.ignore_dirs:
+    def walk(self, top):
+        """Walks through the tree and stores files mtimes.
+        """
+        file_list = {}
+        stats = defaultdict(int)
+        start = time()
+
+        for root, dirs, files in os.walk(top):
+            # this removes './' from begining of the line
+            root = os.path.normpath(root)
+            stats['dirs_checked'] += 1
+
+            ignore = False
+            for dir in self.ignore_dirs:
+                if root.startswith(dir):
+                    ignore = True
+                    break
+            if ignore:
+            #if os.path.basename(root) in self.ignore_dirs:
                 # Do not dig in ignored dirs
+                stats['dirs_ignored'] += 1
                 continue
 
             for name in files:
                 full_path = os.path.join(root, name)
+                stats['files_checked'] += 1
+
                 if self.include(full_path):
                     if os.path.isfile(full_path):
-                        # preventing fail if the file vanishes
-                        content = open(full_path).read()
-                        hashcode = hashlib.sha224(content).hexdigest()
-                        file_list[full_path] = hashcode
-            for name in dirs:
-                if name not in self.ignore_dirs:
-                    self.walk(os.path.join(root, name), file_list)
+                        file_list[full_path] = os.path.getmtime(full_path)
+                else:
+                    stats['files_ignored'] += 1
+
+        if self.debug:
+            stats['time'] = time() - start
+            print ', '.join('%s: %s' % (key, value) for key, value in sorted(stats.items()))
+
         return file_list
-
-    def file_sizes(self):
-        """Returns total filesize (in MB)"""
-        size = sum(map(os.path.getsize, self.file_list))
-        return size / 1024 / 1024
-
 
     def diff_list(self, list1, list2):
         """Extracts differences between lists. For debug purposes"""
-        for key in list1:
+        for key, value in list1.iteritems():
             if key in list2 and list2[key] != list1[key]:
-                print key
+                print key, 'changed'
             elif key not in list2:
-                print key
+                print key, 'is new'
 
     def run(self, cmd):
         """Runs the appropriate command"""
         print datetime.datetime.now()
-        output = commands.getoutput(cmd)
-        print output
+        subprocess.call(cmd, shell=True)
 
     def run_tests(self):
         """Execute tests"""
@@ -207,7 +225,7 @@ class Watcher(object):
         """Main loop daemon."""
         while True:
             sleep(1)
-            new_file_list = self.walk(self.file_path, {})
+            new_file_list = self.walk(self.file_path)
             if new_file_list != self.file_list:
                 if self.debug:
                     self.diff_list(new_file_list, self.file_list)
@@ -246,22 +264,18 @@ def main(prog_args=None):
         path = '.'
 
     try:
-        watcher = Watcher(path, opt.test_program, opt.debug, opt.custom_args, 
-            opt.ignore_dirs)
-        watcher_file_size = watcher.file_sizes()
-        if watcher_file_size > opt.size_max:
-            message =  "It looks like the total file size (%dMb) is larger  than the `max size` option (%dMb).\nThis may slow down the file comparison process, and thus the daemon performances.\nDo you wish to continue? [y/N] " % (watcher_file_size, opt.size_max)
-
-            if not ask(message):
-                raise CancelDueToUserRequest('Ok, thx, bye...')
-
+        watcher = Watcher(
+            path,
+            opt.test_program,
+            debug=opt.debug,
+            custom_args=opt.custom_args,
+            ignore_dirs=opt.ignore_dirs,
+        )
         print "Ready to watch file changes..."
         watcher.loop()
     except (KeyboardInterrupt, SystemExit):
         # Ignore when you exit via Crtl-C
         pass
-    except Exception, msg:
-        print msg
 
     print "Bye"
 
