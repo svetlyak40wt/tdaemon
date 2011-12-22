@@ -2,3 +2,5 @@ build/*
 dist/*
 env/*
 tdaemon.egg-info/*
+.*.swp
+*.pyc
