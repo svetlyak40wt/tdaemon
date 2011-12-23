@@ -94,14 +94,16 @@ You can change this quota by using the ``--size-max`` argument. For example:
 With this argument, the programm will only ask for your permission to proceed
 with a total archive of more than 100MB.
 
-#### Ignore directories
+#### Ignore directories and files
 
-If you have a large sub-directory that will slow the scanning and contains no 
-tests, you can use the ``--ignore-dir`` argument, which uses a comma-separated
-list of directories to not watch.
-    
-    $ tdaemon --ignore-dirs=docs
-    $ tdaemon --ignore-dirs=docs,build
+If you have a large sub-directory that will slow the scanning and contains no
+tests, you can use the ``--ignore`` argument, which uses a comma-separated
+list of patterns to not watch.
+
+    $ tdaemon --ignore=docs
+    $ tdaemon --ignore=docs,build,*.png
+
+Also, tdaemon takes these patterns from the ``.gitignore`` file if it is available.
 
 ### TODO
 
