@@ -11,17 +11,21 @@ file for more details.
 """
 
 
-import sys
-import os
-import optparse
 import datetime
+import optparse
+import os
+import re
 import subprocess
+import sys
+import fnmatch
 
-from time import sleep, time
 from collections import defaultdict
+from time import sleep, time
 
-IGNORE_EXTENSIONS = ('pyc', 'pyo', 'swp')
-IGNORE_DIRS = ('.bzr', '.git', '.hg', '.darcs', '.svn')
+IGNORE = (
+    '.bzr', '.git', '.hg', '.darcs', '.svn',
+    '*.pyc', '*.pyo', '*.swp',
+)
 IMPLEMENTED_TEST_PROGRAMS = ('nose', 'nosetests', 'django', 'py', 'symfony',
     'jelix',
 )
@@ -69,18 +73,26 @@ class Watcher(object):
             test_program,
             debug=False,
             custom_args='',
-            ignore_dirs=None,
+            ignore=None,
         ):
         self.debug = debug
         # Safe filter
         custom_args = escapearg(custom_args)
 
         self.file_path = file_path
-        self.ignore_dirs = list(IGNORE_DIRS)
-        if ignore_dirs:
-            self.ignore_dirs.extend([d for d in ignore_dirs.split(',')])
+        self.ignore = list(IGNORE)
+
+        if ignore:
+            self.ignore.extend([d for d in ignore.split(',')])
+
+        self.ignore = '(%s)' % '|'.join(
+            fnmatch.translate(item)
+            for item in self.ignore
+        )
+        self.ignore = re.compile(self.ignore)
 
         self.file_list = self.walk(file_path)
+
         self.test_program = test_program
         self.custom_args = custom_args
 
@@ -153,18 +165,6 @@ class Watcher(object):
             cmd = '%s %s' % (cmd, self.custom_args)
         return cmd
 
-    # Path manipulation
-    def include(self, path):
-        """Returns `True` if the file is not ignored"""
-        for extension in IGNORE_EXTENSIONS:
-            if path.endswith(extension):
-                return False
-        parts = path.split(os.path.sep)
-        for part in parts:
-            if part in self.ignore_dirs:
-                return False
-        return True
-
     def walk(self, top):
         """Walks through the tree and stores files mtimes.
         """
@@ -177,22 +177,21 @@ class Watcher(object):
             root = os.path.normpath(root)
             stats['dirs_checked'] += 1
 
-            ignore = False
-            for dir in self.ignore_dirs:
-                if root.startswith(dir):
-                    ignore = True
-                    break
-            if ignore:
-            #if os.path.basename(root) in self.ignore_dirs:
-                # Do not dig in ignored dirs
-                stats['dirs_ignored'] += 1
-                continue
+            # don't walk into ignored directories
+            dirs_len = len(dirs)
+            dirs[:] = [
+                dir
+                for dir in dirs
+                if self.ignore.search(os.path.join(root, dir)) is None
+            ]
+            stats['dirs_ignored'] += dirs_len - len(dirs)
 
+            # now check files
             for name in files:
                 full_path = os.path.join(root, name)
                 stats['files_checked'] += 1
 
-                if self.include(full_path):
+                if self.ignore.search(name) is None:
                     if os.path.isfile(full_path):
                         file_list[full_path] = os.path.getmtime(full_path)
                 else:
@@ -252,9 +251,9 @@ def main(prog_args=None):
     parser.add_option('--custom-args', dest='custom_args', default='',
         type="str",
         help="Defines custom arguments to pass after the test program command")
-    parser.add_option('--ignore-dirs', dest='ignore_dirs', default='',
+    parser.add_option('--ignore', dest='ignore', default='',
         type="str",
-        help="Defines directories to ignore.  Use a comma-separated list.")
+        help="Defines patterns to ignore.  Use a comma-separated list. Use * to substitute many symbols.")
 
     opt, args = parser.parse_args(prog_args)
 
@@ -269,7 +268,7 @@ def main(prog_args=None):
             opt.test_program,
             debug=opt.debug,
             custom_args=opt.custom_args,
-            ignore_dirs=opt.ignore_dirs,
+            ignore=opt.ignore,
         )
         print "Ready to watch file changes..."
         watcher.loop()
