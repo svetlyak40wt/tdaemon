@@ -82,12 +82,17 @@ class Watcher(object):
         self.file_path = file_path
         self.ignore = list(IGNORE)
 
+        # add patterns given from command line
         if ignore:
-            self.ignore.extend([d for d in ignore.split(',')])
+            self.ignore.extend(d for d in ignore.split(','))
+
+        # add patterns from .gitignore if any
+        if os.path.exists('.gitignore'):
+            self.ignore.extend(d for d in open('.gitignore').read().split('\n'))
 
         self.ignore = '(%s)' % '|'.join(
             fnmatch.translate(item)
-            for item in self.ignore
+            for item in set(filter(None, self.ignore))
         )
         self.ignore = re.compile(self.ignore)
 
