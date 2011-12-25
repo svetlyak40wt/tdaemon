@@ -105,6 +105,7 @@ list of directories to not watch.
 
 ### TODO
 
+    [ ] Remove test tool support and make it configurable via command line.
     [ ] Extend the test utilities to other languages
     [ ] Check other pythonic dependencies (django, py.test). Won't be possible
         for non-python test-programs, though
