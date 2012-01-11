@@ -96,7 +96,11 @@ class Watcher(object):
         )
         self.ignore = re.compile(self.ignore)
 
-        self.file_list = self.walk(file_path)
+        # a cache with last modified files
+        self.hot_top = defaultdict(int)
+        self.hot_top_limit = 20
+
+        self.file_list = self.walk()
 
         self.test_program = test_program
         self.custom_args = custom_args
@@ -170,37 +174,48 @@ class Watcher(object):
             cmd = '%s %s' % (cmd, self.custom_args)
         return cmd
 
-    def walk(self, top):
+    def walk(self, quick=False):
         """Walks through the tree and stores files mtimes.
         """
-        file_list = {}
+
         stats = defaultdict(int)
         start = time()
 
-        for root, dirs, files in os.walk(top):
-            # this removes './' from begining of the line
-            root = os.path.normpath(root)
-            stats['dirs_checked'] += 1
-
-            # don't walk into ignored directories
-            dirs_len = len(dirs)
-            dirs[:] = [
-                dir
-                for dir in dirs
-                if self.ignore.search(os.path.join(root, dir)) is None
-            ]
-            stats['dirs_ignored'] += dirs_len - len(dirs)
-
-            # now check files
-            for name in files:
-                full_path = os.path.join(root, name)
-                stats['files_checked'] += 1
-
-                if self.ignore.search(name) is None:
-                    if os.path.isfile(full_path):
-                        file_list[full_path] = os.path.getmtime(full_path)
+        if quick:
+            file_list = self.file_list.copy()
+            for filename in self.hot_top:
+                if os.path.isfile(filename):
+                    file_list[filename] = os.path.getmtime(filename)
+                    stats['files_checked'] += 1
                 else:
-                    stats['files_ignored'] += 1
+                    file_list.pop(filename, None)
+        else:
+            file_list = {}
+
+            for root, dirs, files in os.walk(self.file_path):
+                # this removes './' from begining of the line
+                root = os.path.normpath(root)
+                stats['dirs_checked'] += 1
+
+                # don't walk into ignored directories
+                dirs_len = len(dirs)
+                dirs[:] = [
+                    dir
+                    for dir in dirs
+                    if self.ignore.search(os.path.join(root, dir)) is None
+                ]
+                stats['dirs_ignored'] += dirs_len - len(dirs)
+
+                # now check files
+                for name in files:
+                    full_path = os.path.join(root, name)
+                    stats['files_checked'] += 1
+
+                    if self.ignore.search(name) is None:
+                        if os.path.isfile(full_path):
+                            file_list[full_path] = os.path.getmtime(full_path)
+                    else:
+                        stats['files_ignored'] += 1
 
         if self.debug:
             stats['time'] = time() - start
@@ -209,12 +224,15 @@ class Watcher(object):
         return file_list
 
     def diff_list(self, list1, list2):
-        """Extracts differences between lists. For debug purposes"""
+        """Extracts differences between lists."""
+        changed = []
+        new = []
         for key, value in list1.iteritems():
             if key in list2 and list2[key] != list1[key]:
-                print key, 'changed'
+                changed.append(key)
             elif key not in list2:
-                print key, 'is new'
+                new.append(key)
+        return changed, new
 
     def run(self, cmd):
         """Runs the appropriate command"""
@@ -227,14 +245,31 @@ class Watcher(object):
 
     def loop(self):
         """Main loop daemon."""
+        iteration = 0
         while True:
             sleep(1)
-            new_file_list = self.walk(self.file_path)
+            # every 20 time do full rescan
+            new_file_list = self.walk(quick=iteration % 30)
+
             if new_file_list != self.file_list:
+                changed, new = self.diff_list(new_file_list, self.file_list)
+
                 if self.debug:
-                    self.diff_list(new_file_list, self.file_list)
+                    print 'changed:', ', '.join(changed)
+                    print 'new:', ', '.join(new)
+
+                for filename in changed + new:
+                    self.hot_top[filename] += 1
+
+                self.hot_top = defaultdict(
+                    int,
+                    sorted(self.hot_top.iteritems(), key=lambda x: x[1], reverse=True)[:self.hot_top_limit]
+                )
+
                 self.run_tests()
                 self.file_list = new_file_list
+            iteration += 1
+
 
 def main(prog_args=None):
     """
@@ -282,6 +317,7 @@ def main(prog_args=None):
         pass
 
     print "Bye"
+
 
 if __name__ == '__main__':
     main()
