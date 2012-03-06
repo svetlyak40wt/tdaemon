@@ -5,7 +5,7 @@ changes (the content is edited), it runs the tests.
 
 ### Installation
 
-If you are on Windows, you will have to add the <python_install_dir>/Scripts 
+If you are on Windows, you will have to add the <python_install_dir>/Scripts
 directory.
 
 #### From Source
@@ -13,7 +13,7 @@ directory.
 Download the source and run:
 
     $ python setup.py install
-    
+
 #### With easy_install
 
     $ easy_install tdaemon
@@ -22,7 +22,7 @@ Download the source and run:
 
 Simply run this:
 
-    $ tdaemon
+    $ tdaemon nosetests
 
 The daemon starts watching the current directory and subdirectories. As soon as
 one file changes, the daemon runs ``nosetests`` and you may watch the result.
@@ -34,65 +34,8 @@ one file changes, the daemon runs ``nosetests`` and you may watch the result.
 If you want to run the daemon from another directory than your current
 directory, just run:
 
-    $ tdaemon /path/to/your/project
+    $ tdaemon --path /path/to/your/project nosetests
 
-
-#### Change the test program
-
-For example, try out ``py.test``:
-
-    $ tdaemon --test-program=py
-
-``Nosetests`` is the default test program, but you may use others.
-
-The available test programs are:
-
-* [nosetests](http://somethingaboutorange.com/mrl/projects/nose/) (keyword is `nose` or `nosetests`)
-* [django](http://docs.djangoproject.com/en/dev/topics/testing/) (keyword is `django`)
-* [py.test](http://codespeak.net/py/dist/test.html) (keyword is `py`)
-* [symfony](http://www.symfony-project.org/) (keyword is `symfony`)
-* [jelix](http://jelix.org/) (keyword is `jelix`)
-
-Bear in mind that if you want to use one of these program, you **must** install
-them on your system.
-
-*Note* : When you're using django, the path to the project must be the path where
-`manage.py` lives.
-
-#### Add parameters to your test program
-
-Most test programs allow you to test using specifig arguments, to test a small
-part of your project, or using a specific setting. If you want to append
-specific arguments to your command line, use the ``--custom-args`` parameter
-like this::
-
-    $ tdaemon --custom-args="myapp.MyTestClass" --test-program=django
-
-The above command will execute the following command in the current directory:
-
-    $ ./manage.py myapp.MyTestClass
-
-Please refer to the test program manual / documentation to find out which
-additional argument you may use here.
-
-**WARNING**: Please note that every time you're going to use this option, it
-will require your confirmation. You are being warned that any command that
-would break your system, erase some important data, etc. is
-**YOUR PLAIN FAULT!**. Not mine. So BE CAREFUL. Please.
-
-#### The max filesize
-
-The ``tdaemon`` first checks the total filesize you want to scan. If the total
-file size exceeds his quota (which is 25MB by default), the program asks you if
-you still want to go on with this. You may be informed that scanning large
-directories may take some time, and thus alter the daemon performances.
-
-You can change this quota by using the ``--size-max`` argument. For example:
-
-    $ tdaemon --size-max=100
-
-With this argument, the programm will only ask for your permission to proceed
-with a total archive of more than 100MB.
 
 #### Ignore directories and files
 
@@ -107,10 +50,7 @@ Also, tdaemon takes these patterns from the ``.gitignore`` file if it is availab
 
 ### TODO
 
-    [ ] Remove test tool support and make it configurable via command line.
-    [ ] Extend the test utilities to other languages
-    [ ] Check other pythonic dependencies (django, py.test). Won't be possible
-        for non-python test-programs, though
+    [ ] Make ``Watcher`` class usable from python.
 
 ### Done
 

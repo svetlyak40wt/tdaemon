@@ -26,39 +26,6 @@ IGNORE = (
     '.bzr', '.git', '.hg', '.darcs', '.svn',
     '*.pyc', '*.pyo', '*.swp',
 )
-IMPLEMENTED_TEST_PROGRAMS = ('nose', 'nosetests', 'django', 'py', 'symfony',
-    'jelix',
-)
-
-# -------- Exceptions
-class InvalidTestProgram(Exception):
-    """Raised as soon as an unexpected test program is chosen"""
-    pass
-
-class InvalidFilePath(Exception):
-    """Raised if the path to project/module is unknown/missing."""
-    pass
-
-class CancelDueToUserRequest(Exception):
-    """Raised when user wants to cancel execution"""
-    pass
-
-# -------- Utils
-def ask(message='Are you sure? [y/N]'):
-    """Asks the user his opinion."""
-    agree = False
-    answer = raw_input(message).lower()
-    if answer.startswith('y'):
-        agree = True
-    return agree
-
-def escapearg(args):
-    """Escapes characters you don't want in arguments (preventing shell
-    injection)"""
-    special_chars = '#&;`|*?~<>^()[]{}$\\'
-    for char in special_chars:
-        args = args.replace(char, '')
-    return args
 
 class Watcher(object):
     """
@@ -70,16 +37,15 @@ class Watcher(object):
     def __init__(
             self,
             file_path,
-            test_program,
+            command,
             debug=False,
             custom_args='',
             ignore=None,
         ):
         self.debug = debug
-        # Safe filter
-        custom_args = escapearg(custom_args)
 
         self.file_path = file_path
+        self.command = command
         self.ignore = list(IGNORE)
 
         # add patterns given from command line
@@ -100,79 +66,19 @@ class Watcher(object):
         self.hot_top = defaultdict(int)
         self.hot_top_limit = 20
 
+        # check configuration
+        self.check_configuration()
+
         self.file_list = self.walk()
 
-        self.test_program = test_program
-        self.custom_args = custom_args
 
-        # check configuration
-        self.check_configuration(file_path, test_program, custom_args)
-
-        self.check_dependencies()
-        self.cmd = self.get_cmd()
-
-
-    def check_configuration(self, file_path, test_program, custom_args):
+    def check_configuration(self):
         """Checks if configuration is ok."""
         # checking filepath
-        if not os.path.isdir(file_path):
-            raise InvalidFilePath("INVALID CONFIGURATION: file path %s is not a directory" %
-                os.path.abspath(file_path)
+        if not os.path.isdir(self.file_path):
+            raise RuntimeError("INVALID CONFIGURATION: file path %s is not a directory" %
+                os.path.abspath(self.file_path)
             )
-
-        if not test_program in IMPLEMENTED_TEST_PROGRAMS:
-            raise InvalidTestProgram('The `%s` is unknown, or not yet implemented. Please chose another one.' % test_program)
-
-        if custom_args:
-            if not ask("WARNING!!!\nYou are about to run the following command\n\n   $ %s\n\nAre you sure you still want to proceed [y/N]? " % self.get_cmd()):
-                raise CancelDueToUserRequest('Test cancelled...')
-
-    def check_dependencies(self):
-        "Checks if the test program is available in the python environnement"
-        if self.test_program == 'nose':
-            try:
-                import nose
-            except ImportError:
-                sys.exit('Nosetests is not available on your system. Please install it and try to run it again')
-        if self.test_program == 'py':
-            try:
-                import py
-            except:
-                sys.exit('py.test is not available on your system. Please install it and try to run it again')
-        if self.test_program == 'django':
-            try:
-                import django
-            except:
-                sys.exit('django is not available on your system. Please install it and try to run it again')
-
-
-    def get_cmd(self):
-        """Returns the full command to be executed at runtime"""
-
-        cmd = None
-        if self.test_program in ('nose', 'nosetests'):
-            cmd = "nosetests %s" % self.file_path
-        elif self.test_program == 'django':
-            executable = "%s/manage.py" % self.file_path
-            if os.path.exists(executable):
-                cmd = "python %s/manage.py test" % self.file_path
-            else:
-                cmd = "django-admin.py test"
-        elif self.test_program == 'py':
-            cmd = 'py.test %s' % self.file_path
-        elif self.test_program == 'symfony':
-            cmd = 'symfony test-all'
-        elif self.test_program == 'jelix':
-            # as seen on http://jelix.org/articles/fr/manuel-1.1/tests_unitaires
-            cmd = 'php tests.php'
-
-        if not cmd:
-            raise InvalidTestProgram("The test program %s is unknown. Valid options are: `nose`, `django` and `py`" % self.test_program)
-
-        # adding custom args
-        if self.custom_args:
-            cmd = '%s %s' % (cmd, self.custom_args)
-        return cmd
 
     def walk(self, quick=False):
         """Walks through the tree and stores files mtimes.
@@ -234,14 +140,10 @@ class Watcher(object):
                 new.append(key)
         return changed, new
 
-    def run(self, cmd):
+    def run(self):
         """Runs the appropriate command"""
         print datetime.datetime.now()
-        subprocess.call(cmd, shell=True)
-
-    def run_tests(self):
-        """Execute tests"""
-        self.run(self.cmd)
+        subprocess.call(self.command, shell=True)
 
     def loop(self):
         """Main loop daemon."""
@@ -266,48 +168,42 @@ class Watcher(object):
                     sorted(self.hot_top.iteritems(), key=lambda x: x[1], reverse=True)[:self.hot_top_limit]
                 )
 
-                self.run_tests()
+                self.run()
                 self.file_list = new_file_list
             iteration += 1
 
 
 def main(prog_args=None):
-    """
-    What do you expect?
-    """
     if prog_args is None:
         prog_args = sys.argv
 
     parser = optparse.OptionParser()
-    parser.usage = """Usage: %[prog] [options] [<path>]"""
-    parser.add_option("-t", "--test-program", dest="test_program",
-        default="nose", help="specifies the test-program to use. Valid values"
-        " include `nose` (or `nosetests`), `django`, `py` (for `py.test`), "
-        '`symfony` and `jelix`')
-    parser.add_option("-d", "--debug", dest="debug", action="store_true",
-        default=False)
-    parser.add_option('-s', '--size-max', dest='size_max', default=25,
-        type="int", help="Sets the maximum size (in MB) of files.")
-    parser.add_option('--custom-args', dest='custom_args', default='',
-        type="str",
-        help="Defines custom arguments to pass after the test program command")
+    parser.usage = """%s [options] 'command to run'""" % sys.argv[0]
+    parser.add_option('-d', '--debug', dest='debug', action='store_true',
+        default=False
+    )
+    parser.add_option('--path', dest='path', default='.',
+        type='str',
+        help='Path to watch on.'
+    )
     parser.add_option('--ignore', dest='ignore', default='',
-        type="str",
-        help="Defines patterns to ignore.  Use a comma-separated list. Use * to substitute many symbols.")
+        type='str',
+        help='Defines patterns to ignore.  Use a comma-separated list. Use * to substitute many symbols.'
+    )
 
     opt, args = parser.parse_args(prog_args)
 
     if args[1:]:
-        path = args[1]
+        command = args[1]
     else:
-        path = '.'
+        print 'Please, specify a command to run'
+        sys.exit(1)
 
     try:
         watcher = Watcher(
-            path,
-            opt.test_program,
+            opt.path,
+            command,
             debug=opt.debug,
-            custom_args=opt.custom_args,
             ignore=opt.ignore,
         )
         print "Ready to watch file changes..."
