@@ -11,16 +11,21 @@ file for more details.
 """
 
 
-import sys
-import os
-import optparse
-from time import sleep
-import hashlib
-import commands
 import datetime
+import optparse
+import os
+import re
+import subprocess
+import sys
+import fnmatch
 
-IGNORE_EXTENSIONS = ('pyc', 'pyo')
-IGNORE_DIRS = ('.bzr', '.git', '.hg', '.darcs', '.svn')
+from collections import defaultdict
+from time import sleep, time
+
+IGNORE = (
+    '.bzr', '.git', '.hg', '.darcs', '.svn',
+    '*.pyc', '*.pyo', '*.swp',
+)
 IMPLEMENTED_TEST_PROGRAMS = ('nose', 'nosetests', 'django', 'py', 'symfony',
     'jelix',
 )
@@ -60,19 +65,43 @@ class Watcher(object):
     Watcher class. This is the daemon that is watching every file in the
     directory and subdirectories, and that runs the test process.
     """
-    file_list = {}
     debug = False
 
-    def __init__(self, file_path, test_program, debug=False, custom_args='', 
-        ignore_dirs=None):
+    def __init__(
+            self,
+            file_path,
+            test_program,
+            debug=False,
+            custom_args='',
+            ignore=None,
+        ):
+        self.debug = debug
         # Safe filter
         custom_args = escapearg(custom_args)
 
         self.file_path = file_path
-        self.ignore_dirs = list(IGNORE_DIRS)
-        if ignore_dirs:
-            self.ignore_dirs.extend([d for d in ignore_dirs.split(',')])
-        self.file_list = self.walk(file_path)
+        self.ignore = list(IGNORE)
+
+        # add patterns given from command line
+        if ignore:
+            self.ignore.extend(d for d in ignore.split(','))
+
+        # add patterns from .gitignore if any
+        if os.path.exists('.gitignore'):
+            self.ignore.extend(d for d in open('.gitignore').read().split('\n'))
+
+        self.ignore = '(%s)' % '|'.join(
+            fnmatch.translate(item)
+            for item in set(filter(None, self.ignore))
+        )
+        self.ignore = re.compile(self.ignore)
+
+        # a cache with last modified files
+        self.hot_top = defaultdict(int)
+        self.hot_top_limit = 20
+
+        self.file_list = self.walk()
+
         self.test_program = test_program
         self.custom_args = custom_args
 
@@ -80,7 +109,6 @@ class Watcher(object):
         self.check_configuration(file_path, test_program, custom_args)
 
         self.check_dependencies()
-        self.debug = debug
         self.cmd = self.get_cmd()
 
 
@@ -146,58 +174,70 @@ class Watcher(object):
             cmd = '%s %s' % (cmd, self.custom_args)
         return cmd
 
-    # Path manipulation
-    def include(self, path):
-        """Returns `True` if the file is not ignored"""
-        for extension in IGNORE_EXTENSIONS:
-            if path.endswith(extension):
-                return False
-        parts = path.split(os.path.sep)
-        for part in parts:
-            if part in self.ignore_dirs:
-                return False
-        return True
+    def walk(self, quick=False):
+        """Walks through the tree and stores files mtimes.
+        """
 
-    def walk(self, top, file_list={}):
-        """Walks the walk. nah, seriously: reads the file and stores a hashkey
-        corresponding to its content."""
-        for root, dirs, files in os.walk(top, topdown=False):
-            if os.path.basename(root) in self.ignore_dirs:
-                # Do not dig in ignored dirs
-                continue
+        stats = defaultdict(int)
+        start = time()
 
-            for name in files:
-                full_path = os.path.join(root, name)
-                if self.include(full_path):
-                    if os.path.isfile(full_path):
-                        # preventing fail if the file vanishes
-                        content = open(full_path).read()
-                        hashcode = hashlib.sha224(content).hexdigest()
-                        file_list[full_path] = hashcode
-            for name in dirs:
-                if name not in self.ignore_dirs:
-                    self.walk(os.path.join(root, name), file_list)
+        if quick:
+            file_list = self.file_list.copy()
+            for filename in self.hot_top:
+                if os.path.isfile(filename):
+                    file_list[filename] = os.path.getmtime(filename)
+                    stats['files_checked'] += 1
+                else:
+                    file_list.pop(filename, None)
+        else:
+            file_list = {}
+
+            for root, dirs, files in os.walk(self.file_path):
+                # this removes './' from begining of the line
+                root = os.path.normpath(root)
+                stats['dirs_checked'] += 1
+
+                # don't walk into ignored directories
+                dirs_len = len(dirs)
+                dirs[:] = [
+                    dir
+                    for dir in dirs
+                    if self.ignore.search(os.path.join(root, dir)) is None
+                ]
+                stats['dirs_ignored'] += dirs_len - len(dirs)
+
+                # now check files
+                for name in files:
+                    full_path = os.path.join(root, name)
+                    stats['files_checked'] += 1
+
+                    if self.ignore.search(name) is None:
+                        if os.path.isfile(full_path):
+                            file_list[full_path] = os.path.getmtime(full_path)
+                    else:
+                        stats['files_ignored'] += 1
+
+        if self.debug:
+            stats['time'] = time() - start
+            print ', '.join('%s: %s' % (key, value) for key, value in sorted(stats.items()))
+
         return file_list
 
-    def file_sizes(self):
-        """Returns total filesize (in MB)"""
-        size = sum(map(os.path.getsize, self.file_list))
-        return size / 1024 / 1024
-
-
     def diff_list(self, list1, list2):
-        """Extracts differences between lists. For debug purposes"""
-        for key in list1:
+        """Extracts differences between lists."""
+        changed = []
+        new = []
+        for key, value in list1.iteritems():
             if key in list2 and list2[key] != list1[key]:
-                print key
+                changed.append(key)
             elif key not in list2:
-                print key
+                new.append(key)
+        return changed, new
 
     def run(self, cmd):
         """Runs the appropriate command"""
         print datetime.datetime.now()
-        output = commands.getoutput(cmd)
-        print output
+        subprocess.call(cmd, shell=True)
 
     def run_tests(self):
         """Execute tests"""
@@ -205,14 +245,31 @@ class Watcher(object):
 
     def loop(self):
         """Main loop daemon."""
+        iteration = 0
         while True:
             sleep(1)
-            new_file_list = self.walk(self.file_path, {})
+            # every 20 time do full rescan
+            new_file_list = self.walk(quick=iteration % 30)
+
             if new_file_list != self.file_list:
+                changed, new = self.diff_list(new_file_list, self.file_list)
+
                 if self.debug:
-                    self.diff_list(new_file_list, self.file_list)
+                    print 'changed:', ', '.join(changed)
+                    print 'new:', ', '.join(new)
+
+                for filename in changed + new:
+                    self.hot_top[filename] += 1
+
+                self.hot_top = defaultdict(
+                    int,
+                    sorted(self.hot_top.iteritems(), key=lambda x: x[1], reverse=True)[:self.hot_top_limit]
+                )
+
                 self.run_tests()
                 self.file_list = new_file_list
+            iteration += 1
+
 
 def main(prog_args=None):
     """
@@ -234,9 +291,9 @@ def main(prog_args=None):
     parser.add_option('--custom-args', dest='custom_args', default='',
         type="str",
         help="Defines custom arguments to pass after the test program command")
-    parser.add_option('--ignore-dirs', dest='ignore_dirs', default='',
+    parser.add_option('--ignore', dest='ignore', default='',
         type="str",
-        help="Defines directories to ignore.  Use a comma-separated list.")
+        help="Defines patterns to ignore.  Use a comma-separated list. Use * to substitute many symbols.")
 
     opt, args = parser.parse_args(prog_args)
 
@@ -246,24 +303,21 @@ def main(prog_args=None):
         path = '.'
 
     try:
-        watcher = Watcher(path, opt.test_program, opt.debug, opt.custom_args, 
-            opt.ignore_dirs)
-        watcher_file_size = watcher.file_sizes()
-        if watcher_file_size > opt.size_max:
-            message =  "It looks like the total file size (%dMb) is larger  than the `max size` option (%dMb).\nThis may slow down the file comparison process, and thus the daemon performances.\nDo you wish to continue? [y/N] " % (watcher_file_size, opt.size_max)
-
-            if not ask(message):
-                raise CancelDueToUserRequest('Ok, thx, bye...')
-
+        watcher = Watcher(
+            path,
+            opt.test_program,
+            debug=opt.debug,
+            custom_args=opt.custom_args,
+            ignore=opt.ignore,
+        )
         print "Ready to watch file changes..."
         watcher.loop()
     except (KeyboardInterrupt, SystemExit):
         # Ignore when you exit via Crtl-C
         pass
-    except Exception, msg:
-        print msg
 
     print "Bye"
+
 
 if __name__ == '__main__':
     main()
