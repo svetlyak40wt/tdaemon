@@ -109,17 +109,15 @@ class Watcher(object):
     Watcher class. This is the daemon that is watching every file in the
     directory and subdirectories, and that runs the test process.
     """
-    debug = False
-
     def __init__(
             self,
             file_path,
             command,
-            debug=False,
+            verbosity=0,
             custom_args='',
             ignore=None,
         ):
-        self.debug = debug
+        self.verbosity = verbosity
 
         self.file_path = file_path
         self.command = command
@@ -174,8 +172,6 @@ class Watcher(object):
             file_list = {}
 
             for root, dirs, files in os.walk(self.file_path):
-                # this removes './' from begining of the line
-                root = os.path.normpath(root)
                 stats['dirs_checked'] += 1
 
                 # don't walk into ignored directories
@@ -183,7 +179,7 @@ class Watcher(object):
                 dirs[:] = [
                     dir
                     for dir in dirs
-                    if self.ignore.search(os.path.join(root, dir)) is None
+                    if self.ignore.search(os.path.normpath(os.path.join(root, dir))) is None
                 ]
                 stats['dirs_ignored'] += dirs_len - len(dirs)
 
@@ -201,7 +197,7 @@ class Watcher(object):
                         if os.path.isfile(full_path):
                             file_list[full_path] = os.path.getmtime(full_path)
 
-        if self.debug:
+        if self.verbosity >= 2:
             stats['time'] = time() - start
             print ', '.join('%s: %s' % (key, value) for key, value in sorted(stats.items()))
 
@@ -234,9 +230,11 @@ class Watcher(object):
             if new_file_list != self.file_list:
                 changed, new = self.diff_list(new_file_list, self.file_list)
 
-                if self.debug:
-                    print 'changed:', ', '.join(changed)
-                    print 'new:', ', '.join(new)
+                if self.verbosity >= 1:
+                    if changed:
+                        print 'changed:', ', '.join(changed)
+                    if new:
+                        print 'new:', ', '.join(new)
 
                 for filename in changed + new:
                     self.hot_top[filename] += 1
@@ -260,9 +258,7 @@ def main(prog_args=None):
 
     parser = optparse.OptionParser()
     parser.usage = """%s [options] 'command to run'""" % sys.argv[0]
-    parser.add_option('-d', '--debug', dest='debug', action='store_true',
-        default=False
-    )
+    parser.add_option('-V', '--verbose', dest='verbosity', action='count')
     parser.add_option('--path', dest='path', default='.',
         type='str',
         help='Path to watch on.'
@@ -284,7 +280,7 @@ def main(prog_args=None):
         watcher = Watcher(
             opt.path,
             command,
-            debug=opt.debug,
+            verbosity=opt.verbosity,
             ignore=opt.ignore,
         )
         print "Ready to watch file changes..."
