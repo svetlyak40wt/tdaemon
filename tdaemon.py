@@ -20,6 +20,7 @@ import re
 import shelve
 import subprocess
 import sys
+import types
 
 from collections import defaultdict
 from time import sleep, time
@@ -28,6 +29,74 @@ IGNORE = (
     '.bzr', '.git', '.hg', '.darcs', '.svn',
     '*.pyc', '*.pyo', '*.swp',
 )
+
+def parse_ignore(lines):
+    """
+    >>> parse_ignore('*.pyc').search('blah.pyc') is not None
+    True
+    >>> parse_ignore('*.pyc').search('blah/minor.pyc') is not None
+    True
+    >>> parse_ignore('*.c').search('blah/minor.cpp') is not None
+    False
+    >>> parse_ignore('*.pyc\\n!blah.pyc').search('blah.pyc').groupdict()
+    {'invert': 'blah.pyc'}
+    >>> parse_ignore('Documentation/*.html').search('Documentation/git.html') is not None
+    True
+    >>> parse_ignore('Documentation/*.html').search('Documentation/pps/git.html') is not None
+    False
+    >>> parse_ignore('/ctags').search('subdir/ctags') is not None
+    False
+    >>> parse_ignore('ctags').search('subdir/ctags') is not None
+    True
+    >>> parse_ignore('/ctags').search('ctags') is not None
+    True
+    >>> parse_ignore('# *.pyc').search('blah.pyc') is not None
+    False
+    """
+    if isinstance(lines, types.StringTypes):
+        lines = lines.split('\n')
+
+    def process(line):
+        leading_slash = False
+        negate = False
+
+        if line.startswith('!'):
+            negate = True
+            line = line[1:]
+
+        if line.startswith('/'):
+            leading_slash = True
+            line = line[1:]
+
+        line = '/'.join(
+            fnmatch.translate(segment)
+            for segment in line.split('/')
+        )
+
+        if '/' in line:
+            line = line.replace('.*', '[^\\/]*')
+
+        line = line.replace('\\Z', '').replace('(?ms)', '')
+
+
+        if negate:
+            line = '(?P<invert>{})'.format(line)
+
+        if not leading_slash:
+            if not line.startswith('.*'):
+                line = '.*' + line
+
+        line = '^{}$'.format(line)
+
+        return line
+
+    ignore = '(%s)' % '|'.join(
+        process(line)
+        for line in filter(None, lines)
+    )
+    ignore = re.compile(ignore)
+    return ignore
+
 
 class Watcher(object):
     """
@@ -58,11 +127,7 @@ class Watcher(object):
         if os.path.exists('.gitignore'):
             self.ignore.extend(d for d in open('.gitignore').read().split('\n'))
 
-        self.ignore = '(%s)' % '|'.join(
-            fnmatch.translate(item)
-            for item in set(filter(None, self.ignore))
-        )
-        self.ignore = re.compile(self.ignore)
+        self.ignore = parse_ignore(self.ignore)
 
         with contextlib.closing(shelve.open('.tdaemon.state')) as shelf:
             # a cache with last modified files
@@ -118,14 +183,17 @@ class Watcher(object):
 
                 # now check files
                 for name in files:
-                    full_path = os.path.join(root, name)
+                    full_path = os.path.normpath(os.path.join(root, name))
+
                     stats['files_checked'] += 1
 
-                    if self.ignore.search(name) is None:
+                    match = self.ignore.search(full_path)
+
+                    if match is not None and match.groupdict().get('invert', None) is None:
+                        stats['files_ignored'] += 1
+                    else:
                         if os.path.isfile(full_path):
                             file_list[full_path] = os.path.getmtime(full_path)
-                    else:
-                        stats['files_ignored'] += 1
 
         if self.debug:
             stats['time'] = time() - start
