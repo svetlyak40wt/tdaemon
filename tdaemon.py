@@ -11,13 +11,15 @@ file for more details.
 """
 
 
+import contextlib
 import datetime
+import fnmatch
 import optparse
 import os
 import re
+import shelve
 import subprocess
 import sys
-import fnmatch
 
 from collections import defaultdict
 from time import sleep, time
@@ -62,8 +64,10 @@ class Watcher(object):
         )
         self.ignore = re.compile(self.ignore)
 
-        # a cache with last modified files
-        self.hot_top = defaultdict(int)
+        with contextlib.closing(shelve.open('.tdaemon.state')) as shelf:
+            # a cache with last modified files
+            self.hot_top = shelf.get('hot-top', defaultdict(int))
+
         self.hot_top_limit = 20
 
         # check configuration
@@ -172,6 +176,9 @@ class Watcher(object):
                 self.file_list = new_file_list
             iteration += 1
 
+    def close(self):
+        with contextlib.closing(shelve.open('.tdaemon.state')) as shelf:
+            shelf['hot-top'] = self.hot_top
 
 def main(prog_args=None):
     if prog_args is None:
@@ -210,7 +217,7 @@ def main(prog_args=None):
         watcher.loop()
     except (KeyboardInterrupt, SystemExit):
         # Ignore when you exit via Crtl-C
-        pass
+        watcher.close()
 
     print "Bye"
 
