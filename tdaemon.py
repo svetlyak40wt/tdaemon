@@ -32,6 +32,12 @@ IGNORE = (
 
 def parse_ignore(lines):
     """
+    This function builds a regex to check file ignorence
+    and tries to keep to the .gitignore's syntax as close
+    as possible.
+
+    For reference: http://www.kernel.org/pub/software/scm/git/docs/gitignore.html#_pattern_format
+
     >>> parse_ignore('*.pyc').search('blah.pyc') is not None
     True
     >>> parse_ignore('*.pyc').search('blah/minor.pyc') is not None
