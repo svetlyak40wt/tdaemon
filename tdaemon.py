@@ -86,13 +86,13 @@ def parse_ignore(lines):
 
 
         if negate:
-            line = '(?P<invert>{})'.format(line)
+            line = '(?P<invert>{0})'.format(line)
 
         if not leading_slash:
             if not line.startswith('.*'):
                 line = '.*' + line
 
-        line = '^{}$'.format(line)
+        line = '^{0}$'.format(line)
 
         return line
 
