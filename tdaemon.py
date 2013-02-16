@@ -74,10 +74,7 @@ def parse_ignore(lines):
             leading_slash = True
             line = line[1:]
 
-        line = '/'.join(
-            fnmatch.translate(segment)
-            for segment in line.split('/')
-        )
+        line = fnmatch.translate(line)
 
         if '/' in line:
             line = line.replace('.*', '[^\\/]*')
