@@ -60,7 +60,7 @@ def parse_ignore(lines):
     False
     """
     if isinstance(lines, types.StringTypes):
-        lines = lines.split('\n')
+        lines = sorted(lines.split('\n'))
 
     def process(line):
         leading_slash = False
