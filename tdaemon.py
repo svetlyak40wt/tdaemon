@@ -58,6 +58,8 @@ def parse_ignore(lines):
     True
     >>> parse_ignore('# *.pyc').search('blah.pyc') is not None
     False
+    >>> parse_ignore('some/nested/*.pyc').search('some/nested/blah.pyc') is not None
+    True
     """
     if isinstance(lines, types.StringTypes):
         lines = sorted(lines.split('\n'))
