@@ -49,4 +49,5 @@ Feel free to fork this project and to send patches back. If you found
 a bug or want to propose a feature, [file theissue](https://github.com/svetlyak40wt/tdaemon/issues)
 at the GitHub.
 
-To run tdaemon's tests, install nose and run: `nosetests --with-doctest tdaemon.py`
+To run tdaemon's tests, install [nose](https://pypi.python.org/pypi/nose)
+and run: `nosetests --with-doctest tdaemon.py`
