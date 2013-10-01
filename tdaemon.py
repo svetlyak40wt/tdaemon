@@ -58,9 +58,11 @@ def parse_ignore(lines):
     True
     >>> parse_ignore('# *.pyc').search('blah.pyc') is not None
     False
+    >>> parse_ignore('some/nested/*.pyc').search('some/nested/blah.pyc') is not None
+    True
     """
     if isinstance(lines, types.StringTypes):
-        lines = lines.split('\n')
+        lines = sorted(lines.split('\n'))
 
     def process(line):
         leading_slash = False
@@ -74,10 +76,7 @@ def parse_ignore(lines):
             leading_slash = True
             line = line[1:]
 
-        line = '/'.join(
-            fnmatch.translate(segment)
-            for segment in line.split('/')
-        )
+        line = fnmatch.translate(line)
 
         if '/' in line:
             line = line.replace('.*', '[^\\/]*')
